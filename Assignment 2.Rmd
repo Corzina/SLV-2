@@ -1,0 +1,105 @@
+---
+title: "SLV Assignment 2"
+author: "Hidde, Ilya, Parisa, & Pim"
+date: '2023-09-21'
+output: html_document
+---
+
+# Prediction Model
+
+```{r setup, include=FALSE,comment=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(psych)
+library(mice)
+library(ggplot2)
+library(corrplot)
+```
+
+### Part 1. Introduction
+
+```{r, include=FALSE}
+data <- read.csv("heartdisease.csv")
+data %>% head
+```
+
+World Health Organization has estimated 12 million deaths occur worldwide, every year due to Heart diseases. Half the deaths in the United States are due to cardio vascular diseases. The early prognosis of cardiovascular diseases can aid in making decisions on lifestyle changes in high risk patients and in turn reduce the complications. [This research](https://www.kaggle.com/datasets/dileep070/heart-disease-prediction-using-logistic-regression) intends to pinpoint the most relevant/risk factors of heart disease. The data includes:
+
+• Sex: male or female(Nominal)
+• Age: Age of the patient;(Continuous)
+• Current Smoker: whether or not the patient is a current smoker (Nominal)
+• Cigs Per Day: the number of cigarettes that the person smoked on average in one day
+• BP Meds: whether or not the patient was on blood pressure medication (Nominal)
+• Prevalent Stroke: whether or not the patient had previously had a stroke (Nominal)
+• Prevalent Hyp: whether or not the patient was hypertensive (Nominal)
+• Diabetes: whether or not the patient had diabetes (Nominal)
+• Tot Chol: total cholesterol level (Continuous)
+• Sys BP: systolic blood pressure (Continuous)
+• Dia BP: diastolic blood pressure (Continuous)
+• BMI: Body Mass Index (Continuous)
+• Heart Rate: heart rate (Continuous)
+• Glucose: glucose level (Continuous)
+• 10 year risk of coronary heart disease CHD (binary: “1”, means “Yes”, “0” means “No”) 
+
+This assignment is structured as follows: In the first part, we present our data. In part 2, we tidy, explore and describe our data, making it possible to further process it. In part 3, we provide basic prediction models, supported by the explanations, interpretations, and graphs. In part 4, We improve our models by making them more complex, which is also accompanied with a discussion. In the part 5, conclusions about predictions are given
+
+### Part 2. Data wrangling
+
+#### Data Type
+
+Lets explore format of each column.
+
+```{r}
+str(data)
+```
+
+Not all columns were imported as data types that we expected but, so we need to change the type for some of the variables.
+
+```{r}
+#specifying factor variables
+dataupd <- data %>%
+mutate(male = as.factor(male),
+       currentSmoker = as.factor(currentSmoker),
+       education = as.factor(education),
+       BPMeds = as.factor(BPMeds),
+       prevalentStroke = as.factor(prevalentStroke),
+       prevalentHyp = as.factor(prevalentHyp),
+       diabetes = as.factor( diabetes),
+       TenYearCHD = as.factor(TenYearCHD))
+```
+
+Now, they are specified in a more relevant manner.
+
+#### missing data
+
+Since factors are specified correctly we are able to explore missing data patterns:
+
+```{r}
+md.pattern(dataupd)
+```
+The md.pattern shows that there are not many missing values in this dataset. PMeds, education, and glucose are the variables which have absent values the most often. It generally can be ignored since the observations in general are usually complete. We will, however, fill in missing values by mean imputation. later, however, data can be restored in a different way.
+
+```{r, include=FALSE}
+miceobj <- mice(dataupd)
+dataupd <- complete(miceobj)
+```
+
+#### normalize data
+
+To simplify model interpretation.
+
+```{r}
+#specify function
+normalise <- function(x) (x-min(x))/(max(x)-min(x))
+
+dataupd <- dataupd %>%
+  mutate_if(is.integer, as.numeric) %>%
+  mutate_if(is.numeric, normalise)
+```
+
+### Part 3. Basic Predictive Modelling
+
+```{r}
+mod1 <- glm(TenYearCHD ~ male + age + currentSmoker + diabetes + BMI + glucose, data = dataupd, family = "binomial")
+summary(mod1)
+```
