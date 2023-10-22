@@ -126,54 +126,97 @@ summary(mod1)
 ```
 
 ```{r}
-# Split the dataset into predictors and the target variable
-predictors <- dataupd_nomissingvalues[, c("male", "age", "currentSmoker", "diabetes", "BMI", "glucose")]
-target <- dataupd_nomissingvalues$TenYearCHD
+# Set seed for reproducibility
+set.seed(123)
+
+# Train 80% and test 20%
+train_proportion <- 0.8
+
+# Create an index for splitting the data
+train_index <- createDataPartition(dataupd_nomissingvalues$TenYearCHD, p = train_proportion, list = FALSE)
+
+# Split the data into training and test sets
+train_data <- dataupd_nomissingvalues[train_index, ]
+test_data <- dataupd_nomissingvalues[-train_index, ]
+
+# For the training dataset (train_data)
+train_predictors <- train_data[, c("male", "age", "currentSmoker", "diabetes", "BMI", "glucose")]
+train_target <- train_data$TenYearCHD
+
+# For the test dataset (test_data)
+test_predictors <- test_data[, c("male", "age", "currentSmoker", "diabetes", "BMI", "glucose")]
+test_target <- test_data$TenYearCHD
 ```
 
 ```{r}
 # Cross-validation
 cv <- trainControl(method = "cv", number = 5)  # 5-fold cross-validation
 
-# Logistic regression model with cross-validation
-model_logistic <- train(x = predictors, y = target, method = "glm", family = "binomial", trControl = cv)
-
-# Confusion matrix
-confusion_matrix <- confusionMatrix(predict(model_logistic), target)
+# Create the logistic regression model with cross-validation
+model_logistic <- train(
+  x = train_predictors, 
+  y = train_target, 
+  method = "glm", 
+  family = "binomial",
+  trControl = cv
+)
 
 # Print the model results
 print(model_logistic)
-
-# Print the confusion matrix
-print(confusion_matrix)
 
 # Extract and print the coefficients
 coef_summary <- summary(model_logistic$finalModel)
 print(coef_summary)
 ```
 
+```{r}
+# Make predictions on the test data using the trained logistic regression model
+test_predictions <- predict(model_logistic, newdata = test_predictors)
+
+# Confusion matrix test
+test_confusion_matrix <- confusionMatrix(test_predictions, test_target)
+
+# Confusion matrix on the test data
+print(test_confusion_matrix)
+```
+
+
+
+
+
 
 
 ### Part 4. More complex model
 
 ```{r}
-# Random Forest model with cross-validation
-model_rf <- train(x = predictors, y = target, method = "rf", trControl = cv)
+# Define the control parameters for cross-validation
+cv <- trainControl(method = "cv", number = 5)  # 5-fold cross-validation
 
-# Confusion matrix
-confusion_matrix <- confusionMatrix(predict(model_rf), target)
+# Create the random forest model with cross-validation
+model_rf <- train(
+  x = train_predictors, 
+  y = train_target, 
+  method = "rf",  # Specify "rf" for random forest
+  trControl = cv
+)
 
 # Print the model results
 print(model_rf)
 
-# Print the confusion matrix
-print(confusion_matrix)
-
 # Extract and print the coefficients
 coef_summary <- summary(model_rf$finalModel)
 print(coef_summary)
-#Variable influence in a random forest is difficult to explain but what the random forest does is easy to explain
 ```
 
+```{r}
+# Make predictions on the test data using the trained random forest model
+test_predictions_rf <- predict(model_rf, newdata = test_predictors)
+
+# Confusion matrix random forest
+test_confusion_matrix_rf <- confusionMatrix(test_predictions_rf, test_target)
+
+# Print the confusion matrix for the random forest model on the test data
+print(test_confusion_matrix_rf)
+```
 
 
