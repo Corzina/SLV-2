@@ -189,7 +189,7 @@ print(test_confusion_matrix)
 ### Part 4. More complex model
 
 ```{r}
-# Define the control parameters for cross-validation
+# Cross-validation
 cv <- trainControl(method = "cv", number = 5)  # 5-fold cross-validation
 
 # Create the random forest model with cross-validation
