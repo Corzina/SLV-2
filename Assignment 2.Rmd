@@ -14,6 +14,9 @@ library(psych)
 library(mice)
 library(ggplot2)
 library(corrplot)
+
+library(randomForest)
+library(caret)
 ```
 
 ### Part 1. Introduction
@@ -79,6 +82,12 @@ md.pattern(dataupd)
 ```
 The md.pattern shows that there are not many missing values in this dataset. PMeds, education, and glucose are the variables which have absent values the most often. It generally can be ignored since the observations in general are usually complete. We will, however, fill in missing values by mean imputation. later, however, data can be restored in a different way.
 
+```{r}
+# Maybe deleting all values is better than mean imputation, as your underestimating the uncertainty, does not preserve the variability in the data.
+dataupd_nomissingvalues <- na.omit(dataupd)
+```
+
+
 ```{r, include=FALSE}
 miceobj <- mice(dataupd)
 dataupd <- complete(miceobj)
@@ -97,9 +106,74 @@ dataupd <- dataupd %>%
   mutate_if(is.numeric, normalise)
 ```
 
+```{r}
+# This is with z score
+# Define a function to standardize (z-score normalize) a numeric vector
+standardize <- function(x) {
+  (x - mean(x, na.rm = TRUE)) / sd(x, na.rm = TRUE)
+}
+
+# Apply z-score standardization to all numeric columns in dataupd_nomissingvalues
+dataupd_nomissingvalues <- dataupd_nomissingvalues %>%
+  mutate_if(is.numeric, standardize)
+```
+
 ### Part 3. Basic Predictive Modelling
 
 ```{r}
 mod1 <- glm(TenYearCHD ~ male + age + currentSmoker + diabetes + BMI + glucose, data = dataupd, family = "binomial")
 summary(mod1)
 ```
+
+```{r}
+# Split the dataset into predictors and the target variable
+predictors <- dataupd_nomissingvalues[, c("male", "age", "currentSmoker", "diabetes", "BMI", "glucose")]
+target <- dataupd_nomissingvalues$TenYearCHD
+```
+
+```{r}
+# Cross-validation
+cv <- trainControl(method = "cv", number = 5)  # 5-fold cross-validation
+
+# Logistic regression model with cross-validation
+model_logistic <- train(x = predictors, y = target, method = "glm", family = "binomial", trControl = cv)
+
+# Confusion matrix
+confusion_matrix <- confusionMatrix(predict(model_logistic), target)
+
+# Print the model results
+print(model_logistic)
+
+# Print the confusion matrix
+print(confusion_matrix)
+
+# Extract and print the coefficients
+coef_summary <- summary(model_logistic$finalModel)
+print(coef_summary)
+```
+
+
+
+### Part 4. More complex model
+
+```{r}
+# Random Forest model with cross-validation
+model_rf <- train(x = predictors, y = target, method = "rf", trControl = cv)
+
+# Confusion matrix
+confusion_matrix <- confusionMatrix(predict(model_rf), target)
+
+# Print the model results
+print(model_rf)
+
+# Print the confusion matrix
+print(confusion_matrix)
+
+# Extract and print the coefficients
+coef_summary <- summary(model_rf$finalModel)
+print(coef_summary)
+#Variable influence in a random forest is difficult to explain but what the random forest does is easy to explain
+```
+
+
+
