@@ -14,7 +14,6 @@ library(psych)
 library(mice)
 library(ggplot2)
 library(corrplot)
-
 library(randomForest)
 library(caret)
 ```
@@ -47,7 +46,6 @@ World Health Organization has estimated 12 million deaths occur worldwide, every
 This assignment is structured as follows: In the first part, we present our data. In part 2, we tidy, explore and describe our data, making it possible to further process it. In part 3, we provide basic prediction models, supported by the explanations, interpretations, and graphs. In part 4, We improve our models by making them more complex, which is also accompanied with a discussion. In the part 5, conclusions about predictions are given
 
 ### Part 2. Data wrangling
-
 #### Data Type
 
 Lets explore format of each column.
@@ -80,7 +78,7 @@ Since factors are specified correctly we are able to explore missing data patter
 ```{r}
 md.pattern(dataupd)
 ```
-The md.pattern shows that there are not many missing values in this dataset. PMeds, education, and glucose are the variables which have absent values the most often. It generally can be ignored since the observations in general are usually complete. We will, however, fill in missing values by mean imputation. later, however, data can be restored in a different way.
+The md.pattern shows that there are not many missing values in this dataset. PMeds, education, and glucose are the variables which have absent values the most often. It generally can be ignored since the observations in general are usually complete. We will, however, fill in missing values by mean imputation. Later, data can be restored in a different way. 
 
 ```{r}
 # Maybe deleting all values is better than mean imputation, as your underestimating the uncertainty, does not preserve the variability in the data.
@@ -88,7 +86,21 @@ dataupd_nomissingvalues <- na.omit(dataupd)
 ```
 
 
-```{r, include=FALSE}
+education  cigsPerDay  BPMeds  totChol  BMI  heartRate  glucose
+```{r}
+imp <- mice(dataupd,  seed = 123)
+plot(imp)
+imp$meth
+
+ini <- mice(data = dataupd, pred=quickpred(dataupd, mincor=.1), m = 5, maxit = 20, print=F, seed = 123)
+plot(ini)
+ini$method
+
+
+stripplot(imp)
+stripplot(ini)
+```
+```{r}
 miceobj <- mice(dataupd)
 dataupd <- complete(miceobj)
 ```
