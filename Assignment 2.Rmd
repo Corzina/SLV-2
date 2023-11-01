@@ -71,38 +71,40 @@ mutate(male = as.factor(male),
 
 Now, they are specified in a more relevant manner.
 
-#### missing data
-
+#### Missing data
 Since factors are specified correctly we are able to explore missing data patterns:
-
 ```{r}
 md.pattern(dataupd)
 ```
 The md.pattern shows that there are not many missing values in this dataset. PMeds, education, and glucose are the variables which have absent values the most often. It generally can be ignored since the observations in general are usually complete. We will, however, fill in missing values by mean imputation. Later, data can be restored in a different way. 
 
+Investigate missing values
+
+We look since this variable has the most missing variables. We look at the distribution of the variable and the distribution of the variable when the missing values are removed. 
+
 ```{r}
-# Maybe deleting all values is better than mean imputation, as your underestimating the uncertainty, does not preserve the variability in the data.
-dataupd_nomissingvalues <- na.omit(dataupd)
+R <- is.na(dataupd$glucose) 
+
+histogram(~male|R, data=dataupd)
+histogram(~age|R, data=dataupd)
+histogram(~education|R, data=dataupd)
+histogram(~cigsPerDay|R, data=dataupd)
 ```
+There don't seem to be any differences in the distribution of the variables when the missing values are removed. Therefore, we can assume that the missing values are missing at random or missing completely at random. 
 
 
-education  cigsPerDay  BPMeds  totChol  BMI  heartRate  glucose
+Imputing for sensitivity analysis
 ```{r}
-imp <- mice(dataupd,  seed = 123)
+imp <- mice(dataupd, m = 5, maxit = 20,  seed = 123, print = F)
 plot(imp)
 imp$meth
-
-ini <- mice(data = dataupd, pred=quickpred(dataupd, mincor=.1), m = 5, maxit = 20, print=F, seed = 123)
-plot(ini)
-ini$method
-
-
 stripplot(imp)
-stripplot(ini)
 ```
+
+
+
 ```{r}
-miceobj <- mice(dataupd)
-dataupd <- complete(miceobj)
+dataupd <- complete(imp)
 ```
 
 #### normalize data
@@ -118,6 +120,12 @@ dataupd <- dataupd %>%
   mutate_if(is.numeric, normalise)
 ```
 
+
+```{r}
+# Maybe deleting all values is better than mean imputation, as your underestimating the uncertainty, does not preserve the variability in the data.
+dataupd_nomissingvalues <- na.omit(dataupd)
+```
+
 ```{r}
 # This is with z score
 # Define a function to standardize (z-score normalize) a numeric vector
@@ -130,11 +138,16 @@ dataupd_nomissingvalues <- dataupd_nomissingvalues %>%
   mutate_if(is.numeric, standardize)
 ```
 
+
 ### Part 3. Basic Predictive Modelling
 
 ```{r}
 mod1 <- glm(TenYearCHD ~ male + age + currentSmoker + diabetes + BMI + glucose, data = dataupd, family = "binomial")
 summary(mod1)
+
+mod1_mice <- with(imp, glm(TenYearCHD ~ male + age + currentSmoker + diabetes + BMI + glucose, data = dataupd, family = "binomial"))
+pool.mod1_mice <- pool(mod1_mice)
+summary(pool.mod1_mice)
 ```
 
 ```{r}
