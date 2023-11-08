@@ -204,11 +204,13 @@ test_confusion_matrix <- confusionMatrix(test_predictions, test_target)
 # Confusion matrix on the test data
 print(test_confusion_matrix)
 ```
+Accuracy:
 
-
-
-
-
+The model has an accuracy of 85.34%, which means that overall, it correctly predicted the outcome for 85.34% of the test set.
+TN = 718: The number of instances correctly predicted as class 0 (no 10-year risk of CHD).
+FP = 124: The number of instances incorrectly predicted as class 0.
+FN = 0: The number of instances incorrectly predicted as class 1 (meaning the model did not incorrectly predict any true class 0 instances as class 1).
+TP = 4: The number of instances correctly predicted as class 1 (10-year risk of CHD).
 
 
 ### Part 4. More complex model
@@ -243,5 +245,30 @@ test_confusion_matrix_rf <- confusionMatrix(test_predictions_rf, test_target)
 # Print the confusion matrix for the random forest model on the test data
 print(test_confusion_matrix_rf)
 ```
+Accuracy: The overall accuracy is 84.52%, meaning the model correctly predicted the outcome for 84.52% of the test set.
+True Negatives (TN): 711 patients were correctly predicted as not having heart disease.
+False Positives (FP): 7 patients were incorrectly predicted as having heart disease.
+True Positives (TP): 4 patients were correctly predicted as having heart disease.
+False Negatives (FN): 124 patients were incorrectly predicted as not having heart disease.
 
 
+### Part 5. explain which method you use (regression/classification and what exactly)
+
+we are using two different methods for predictive modeling: logistic regression and random forest. 
+
+Logistic Regression
+Method Type: Classification:
+Logistic regression is a statistical method for analyzing a dataset in which there are one or more independent variables that determine an outcome. The outcome is measured with a dichotomous variable (where there are only two possible outcomes). In our case, the outcome is the 10-year risk of coronary heart disease (CHD), which is binary ("1" indicating "Yes", "0" indicating "No"). Logistic regression is used here to model the probability that a given input point belongs to the category of having a risk of CHD.
+In the code, we create a logistic regression model (mod1) using the glm() function with the family set to "binomial", which indicates a logistic regression. we model the TenYearCHD as a function of several predictor variables including male, age, currentSmoker, diabetes, BMI, and glucose.
+
+Random Forest
+Method Type: Classification
+
+Random forest is an ensemble learning method for classification (and regression) that works by constructing a multitude of decision trees at training time and outputting the mode of the classes (majority vote) for classification. 
+In the code, a random forest model (model_rf) is created using the train() function from the caret package with the method set to "rf". This model also aims to predict the TenYearCHD outcome based on the same set of predictors as the logistic regression model. Random forests typically perform well for a wide range of data types without the need for extensive data preprocessing like normalization or scaling.
+
+### Part 6. interpret the parameters of your method, if applicable.if no parameters, interpret the contribution of the features have to the model.
+
+random forests provide measures of feature importance, which indicate how much each feature contributes to the prediction. 
+If a feature like age has a high importance score, it suggests that age is a strong predictor in determining the risk of coronary heart disease across the trees in the random forest.
+For other features such as currentSmoker or BMI, their importance scores reflect their relative contribution to the model's predictions. A lower score would indicate that the feature is less influential.
