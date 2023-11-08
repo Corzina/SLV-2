@@ -16,6 +16,7 @@ library(ggplot2)
 library(corrplot)
 library(randomForest)
 library(caret)
+library(xgboost)
 ```
 
 ### Part 1. Introduction
@@ -109,7 +110,9 @@ standardize <- function(x) {
 }
 
 # Deleting all missing values is better than simple imputation, as your underestimating the uncertainty, does not preserve the variability in the data.
-data_normalised <- na.omit(data) %>%
+data.deletion <- na.omit(data) 
+
+data_normalised <- data.deletion %>%
   mutate_if(is.integer, as.numeric) %>%
   mutate_if(is.numeric, normalise)
 
@@ -117,12 +120,14 @@ data_normalised <- na.omit(data) %>%
 # Apply z-score standardization to all numeric columns
 data_standardized <- na.omit(data_normalised) %>%
   mutate_if(is.numeric, standardize)
+data_standardized$TenYearCHD <- as.factor(data.deletion$TenYearCHD)
+
 ```
 
 
 #### Visualize data
 ```{r}
-data_normalised %>%
+data_standardized %>%
   pivot_longer(cols = -c(TenYearCHD), names_to = "name", values_to = "value") %>%
   ggplot(aes(x = value, color = as.factor(TenYearCHD), fill = as.factor(TenYearCHD))) +
   geom_boxplot(alpha = 0.8) +
@@ -131,7 +136,7 @@ data_normalised %>%
   scale_fill_brewer(palette = "Paired") +
   theme_minimal()
 
-data_normalised %>%
+data_standardized %>%
   pivot_longer(cols = -c(TenYearCHD), names_to = "name", values_to = "value") %>%
   ggplot(aes(x = value, col = as.factor(TenYearCHD), fill = as.factor(TenYearCHD))) +
   geom_density(alpha = 0.8) +
@@ -144,7 +149,7 @@ data_normalised %>%
 
 ### Part 3. Basic Predictive Modelling
 ```{r}
-mod1 <- glm(TenYearCHD ~ male + age + currentSmoker + diabetes + BMI + glucose, data = data_normalised, family = "binomial")
+mod1 <- glm(TenYearCHD ~ male + age + currentSmoker + diabetes + BMI + glucose, data = data_standardized, family = "binomial")
 summary(mod1)
 ```
 
@@ -159,8 +164,8 @@ train_proportion <- 0.8
 train_index <- createDataPartition(data_standardized$TenYearCHD, p = train_proportion, list = FALSE)
 
 # Split the data into training and test sets
-train_data <- dataupd_nomissingvalues[train_index, ]
-test_data <- dataupd_nomissingvalues[-train_index, ]
+train_data <- data_standardized[train_index, ]
+test_data <- data_standardized[-train_index, ]
 
 # For the training dataset (train_data)
 train_predictors <- train_data[, c("male", "age", "currentSmoker", "diabetes", "BMI", "glucose")]
@@ -214,9 +219,6 @@ TP = 4: The number of instances correctly predicted as class 1 (10-year risk of 
 
 ### Part 4. More complex model
 ```{r}
-# Cross-validation
-cv <- trainControl(method = "cv", number = 5)  # 5-fold cross-validation
-
 # Create the random forest model with cross-validation
 model_rf <- train(
   x = train_predictors, 
@@ -228,10 +230,6 @@ model_rf <- train(
 # Print the model results
 print(model_rf)
 
-# Extract and print the coefficients
-coef_summary <- summary(model_rf$finalModel)
-print(coef_summary)
-
 # plot the variable importance
 model_rf %>%
   varImp %>%
@@ -239,16 +237,17 @@ model_rf %>%
 ```
 
 ```{r}
-# Make predictions on the test data using the trained random forest model
+# Make predictions on the train and test data using the trained random forest model
+train_predictions_rf <- predict(model_rf, newdata = train_predictors)
 test_predictions_rf <- predict(model_rf, newdata = test_predictors)
 
 # Confusion matrix random forest
+train_confusion_matrix_rf <- confusionMatrix(train_predictions_rf, train_target)
 test_confusion_matrix_rf <- confusionMatrix(test_predictions_rf, test_target)
 
-# Print the confusion matrix for the random forest model on the test data
+# Print the confusion matrix for the random forest model on the test and train data
 print(test_confusion_matrix_rf)
-
-
+print(train_confusion_matrix_rf)
 ```
 Accuracy: The overall accuracy is 84.52%, meaning the model correctly predicted the outcome for 84.52% of the test set.
 True Negatives (TN): 711 patients were correctly predicted as not having heart disease.
@@ -256,6 +255,66 @@ False Positives (FP): 7 patients were incorrectly predicted as having heart dise
 True Positives (TP): 4 patients were correctly predicted as having heart disease.
 False Negatives (FN): 124 patients were incorrectly predicted as not having heart disease.
 
+
+
+
+```{r}
+model_gbm <- train(
+  x = train_predictors, 
+  y = train_target, 
+  method = "gbm", 
+  verbose = F,
+  trControl = cv
+)
+summary(model_gbm)
+
+model_gbm
+```
+
+```{r}
+train_x <- model.matrix(TenYearCHD ~ ., train_data)[,-1]
+train_y <- as.numeric(train_target) - 1
+xgboost_train <- xgboost(data = train_x,
+                         label = train_y, 
+                         max.depth = 10,
+                         eta = 1,
+                         nthread = 4,
+                         nrounds = 4,
+                         objective = "binary:logistic",
+                         verbose = 2)
+
+
+
+
+
+pred <- tibble(Disease = predict(xgboost_train, newdata = train_x)) %>%
+  mutate(Disease = factor(ifelse(Disease < 0.5, 1, 2),
+                          labels = c("Healthy", "Disease")))
+
+table(pred$Disease, train_data$TenYearCHD)
+
+shap_results <- shap.score.rank(xgboost_train,
+                                X_train = train_x,
+                                shap_approx = F)
+
+var_importance(shap_results)
+
+shap_long <- shap.prep(shap = shap_results,
+                       X_train = train_x)
+
+plot.shap.summary(shap_long)
+
+xgb.plot.shap(train_x, features = colnames(train_x), model = xgboost_train, n_col = 3)
+```
+```{r}
+rf_test  <- predict(model_rf, newdata = test_predictors)
+xgb_test <- predict(xgboost_train, newdata = model.matrix(TenYearCHD ~ ., test_data)[,-1]) %>%
+  factor(x = ifelse(. < 0.5, 1, 2), levels = c(1,2), labels = c("0", "1"))
+
+list(rf_test, 
+     xgb_test) %>%
+  map(~ confusionMatrix(.x, test_data$TenYearCHD))
+```
 
 
 
