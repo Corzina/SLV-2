@@ -16,6 +16,8 @@ library(corrplot)
 library(randomForest)
 library(caret)
 library(xgboost)
+library(devtools)
+source_url("https://github.com/pablo14/shap-values/blob/master/shap.R?raw=TRUE")
 ```
 
 ### Part 1. Introduction
@@ -81,7 +83,6 @@ Investigate missing values
 We look since this variable has the most missing variables. We look at the distribution of the variable and the distribution of the variable when the missing values are removed. 
 ```{r}
 R <- is.na(dataupd$glucose) 
-
 histogram(~male|R, data=dataupd)
 histogram(~age|R, data=dataupd)
 histogram(~education|R, data=dataupd)
@@ -113,26 +114,20 @@ data.deletion <- na.omit(data)
 
 data_normalised <- data.deletion %>%
   mutate_if(is.integer, as.numeric) %>%
-  mutate(education = as.factor(education)) %>% # change education to factor
-  mutate(TenYearCHD = as.factor(TenYearCHD)) %>% # change TenYearCHD to factor
-  mutate(currentSmoker = as.factor(currentSmoker)) %>%
-  mutate(BPMeds = as.factor(BPMeds)) %>%
-  mutate(prevalentStroke = as.factor(prevalentStroke)) %>%
-  mutate(prevalentHyp = as.factor(prevalentHyp)) %>%
-  mutate(diabetes = as.factor(diabetes)) %>%
-  mutate(male = as.factor(male)) %>%
+  mutate(across(c(education, TenYearCHD, currentSmoker, BPMeds, prevalentStroke, prevalentHyp, diabetes, male), as.factor)) %>%
   mutate_if(is.numeric, normalise)
 
-
 # Apply z-score standardization to all numeric columns
-data_standardized <- na.omit(data_normalised) %>%
+data_standardized <- data.deletion %>%
+  mutate_if(is.integer, as.numeric) %>%
+  mutate(across(c(education, TenYearCHD, currentSmoker, BPMeds, prevalentStroke, prevalentHyp, diabetes, male), as.factor)) %>%
   mutate_if(is.numeric, standardize)
 ```
 
 
 #### Visualize data
 ```{r}
-data_normalised %>%
+data_standardized %>%
   pivot_longer(cols = -c(TenYearCHD, male, education, currentSmoker, BPMeds, prevalentStroke, prevalentHyp, diabetes), names_to = "name", values_to = "value") %>%
   ggplot(aes(x = value, color = as.factor(TenYearCHD), fill = as.factor(TenYearCHD))) +
   geom_boxplot(alpha = 0.8) +
@@ -141,7 +136,7 @@ data_normalised %>%
   scale_fill_brewer(palette = "Paired") +
   theme_minimal()
 
-data_normalised %>%
+data_standardized %>%
   pivot_longer(cols = -c(TenYearCHD, male, education, currentSmoker, BPMeds, prevalentStroke, prevalentHyp, diabetes), names_to = "name", values_to = "value") %>%
   ggplot(aes(x = value, col = as.factor(TenYearCHD), fill = as.factor(TenYearCHD))) +
   geom_density(alpha = 0.8) +
@@ -155,7 +150,7 @@ data_normalised %>%
 ### Part 3. Basic Predictive Modelling
 #### simple example of a logistic regression model
 ```{r}
-mod1 <- glm(TenYearCHD ~ ., data = data_normalised, family = "binomial")
+mod1 <- glm(TenYearCHD ~ ., data = data_standardized, family = "binomial")
 summary(mod1)
 ```
 
@@ -177,7 +172,7 @@ test_data <- data_standardized[-train_index, ]
 
 ```{r}
 # Cross-validation
-cv <- trainControl(method = "cv", number = 5)  # 5-fold cross-validation
+cv <- trainControl(method = "cv", number = 10)  # 5-fold cross-validation
 
 # Create the logistic regression model with cross-validation
 model_logistic <- train(
@@ -201,13 +196,12 @@ print(coef_summary)
 test_predictions <- predict(model_logistic, newdata = test_data)
 
 # Confusion matrix test
-test_confusion_matrix <- confusionMatrix(test_predictions, test_data$TenYearCHD)
+test_confusion_matrix <- confusionMatrix(test_predictions, test_data$TenYearCHD, positive = "1")
 
 # Confusion matrix on the test data
 print(test_confusion_matrix)
 ```
 Accuracy:
-
 The model has an accuracy of 85.34%, which means that overall, it correctly predicted the outcome for 85.34% of the test set.
 TN = 718: The number of instances correctly predicted as class 0 (no 10-year risk of CHD).
 FP = 124: The number of instances incorrectly predicted as class 0.
@@ -217,44 +211,85 @@ TP = 4: The number of instances correctly predicted as class 1 (10-year risk of 
 ### Part 4. A more complex model
 ```{r}
 train_x <- model.matrix(TenYearCHD ~ ., train_data)[,-1]
-train_y <- as.numeric(train_target) - 1
+train_y <- as.numeric(train_data$TenYearCHD) - 1
+
+bst.cv$evaluation_log$test_error_mean
+
+bst.cv <- xgb.cv(data = train_x,
+                        label = train_y, 
+                        nrounds = 300, 
+                        nfold = 20,
+                        max.depth = 10,
+                        eta = .05,
+                        print_every_n = 20,
+                        verbose = 2,
+                        objective = "binary:logistic"
+                        )
+
+res_df <- data.frame(TRAINING_ERROR = bst.cv$evaluation_log$train_logloss_mean, 
+                     VALIDATION_ERROR = bst.cv$evaluation_log$test_logloss_mean, # Don't confuse this with the test data set. 
+                     ITERATION = bst.cv$evaluation_log$iter) %>%
+  mutate(MIN = VALIDATION_ERROR == min(VALIDATION_ERROR))
+
+best_nrounds <- res_df %>%
+  filter(MIN) %>%
+  pull(ITERATION)
+
+res_df_longer <- pivot_longer(data = res_df, 
+                              cols = c(TRAINING_ERROR, VALIDATION_ERROR), 
+                              names_to = "ERROR_TYPE",
+                              values_to = "ERROR")
+
+g <- ggplot(res_df_longer, aes(x = ITERATION)) +        # Look @ it overfit.
+  geom_line(aes(y = ERROR, group = ERROR_TYPE, colour = ERROR_TYPE)) +
+  geom_vline(xintercept = best_nrounds, colour = "green") +
+  geom_label(aes(label = str_interp("${best_nrounds} iterations gives minimum validation error"), y = 0.2, x = best_nrounds, hjust = 0.1)) +
+  labs(
+    x = "nrounds",
+    y = "Error",
+    title = "Test & Train Errors",
+    subtitle = str_interp("Note how the training error keeps decreasing after ${best_nrounds} iterations, but the validation error starts \ncreeping up. This is a sign of overfitting.")
+  ) +
+  scale_colour_discrete("Error Type: ")
+
+g
+```
+
+
+```{r}
 xgboost_train <- xgboost(data = train_x,
                          label = train_y, 
+                         nrounds = best_nrounds,
                          max.depth = 10,
-                         eta = 1,
-                         nthread = 4,
-                         nrounds = 4,
+                         eta = .05,
                          objective = "binary:logistic",
                          verbose = 2)
 
 
-pred <- tibble(Disease = predict(xgboost_train, newdata = train_x)) %>%
-  mutate(Disease = factor(ifelse(Disease < 0.5, 1, 2),
-                          labels = c("Healthy", "Disease")))
+pred <- tibble(TenYearCHD = predict(xgboost_train, newdata = train_x)) %>%
+  mutate(TenYearCHD = factor(ifelse(TenYearCHD < 0.5, 1, 2),
+                          labels = c("0", "1")))
 
-table(pred$Disease, train_data$TenYearCHD)
-
+table(pred$TenYearCHD, train_data$TenYearCHD)
 shap_results <- shap.score.rank(xgboost_train,
                                 X_train = train_x,
                                 shap_approx = F)
 
 var_importance(shap_results)
-
 shap_long <- shap.prep(shap = shap_results,
                        X_train = train_x)
 
 plot.shap.summary(shap_long)
-
 xgb.plot.shap(train_x, features = colnames(train_x), model = xgboost_train, n_col = 3)
 ```
 ```{r}
-rf_test  <- predict(model_rf, newdata = test_data)
+logistic_test  <- predict(model_logistic, newdata = test_data)
 xgb_test <- predict(xgboost_train, newdata = model.matrix(TenYearCHD ~ ., test_data)[,-1]) %>%
   factor(x = ifelse(. < 0.5, 1, 2), levels = c(1,2), labels = c("0", "1"))
 
-list(rf_test, 
+list(logistic_test, 
      xgb_test) %>%
-  map(~ confusionMatrix(.x, test_data$TenYearCHD))
+  map(~ confusionMatrix(.x, test_data$TenYearCHD, positive = "1"))
 ```
 
 
