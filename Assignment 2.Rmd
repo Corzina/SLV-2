@@ -220,7 +220,8 @@ bst.cv <- xgb.cv(data = train_x,
                         nrounds = 300, 
                         nfold = 20,
                         max.depth = 10,
-                        eta = .05,
+                        eta = .25,
+                        gamma = .5,
                         print_every_n = 20,
                         verbose = 2,
                         objective = "binary:logistic"
@@ -260,8 +261,9 @@ g
 xgboost_train <- xgboost(data = train_x,
                          label = train_y, 
                          nrounds = best_nrounds,
-                         max.depth = 10,
-                         eta = .05,
+                         max.depth= 10,
+                         gamma = .5,
+                         eta = .25,
                          objective = "binary:logistic",
                          verbose = 2)
 
