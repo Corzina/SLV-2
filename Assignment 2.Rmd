@@ -18,6 +18,8 @@ library(caret)
 library(xgboost)
 library(devtools)
 source_url("https://github.com/pablo14/shap-values/blob/master/shap.R?raw=TRUE")
+library(doParallel)
+library(ParBayesianOptimization)
 ```
 
 ### Part 1. Introduction
@@ -212,68 +214,171 @@ TP = 4: The number of instances correctly predicted as class 1 (10-year risk of 
 ```{r}
 train_x <- model.matrix(TenYearCHD ~ ., train_data)[,-1]
 train_y <- as.numeric(train_data$TenYearCHD) - 1
-
-bst.cv$evaluation_log$test_error_mean
-
-bst.cv <- xgb.cv(data = train_x,
-                        label = train_y, 
-                        nrounds = 300, 
-                        nfold = 20,
-                        max.depth = 10,
-                        eta = .25,
-                        gamma = .5,
-                        print_every_n = 20,
-                        verbose = 2,
-                        objective = "binary:logistic"
-                        )
-
-res_df <- data.frame(TRAINING_ERROR = bst.cv$evaluation_log$train_logloss_mean, 
-                     VALIDATION_ERROR = bst.cv$evaluation_log$test_logloss_mean, # Don't confuse this with the test data set. 
-                     ITERATION = bst.cv$evaluation_log$iter) %>%
-  mutate(MIN = VALIDATION_ERROR == min(VALIDATION_ERROR))
-
-best_nrounds <- res_df %>%
-  filter(MIN) %>%
-  pull(ITERATION)
-
-res_df_longer <- pivot_longer(data = res_df, 
-                              cols = c(TRAINING_ERROR, VALIDATION_ERROR), 
-                              names_to = "ERROR_TYPE",
-                              values_to = "ERROR")
-
-g <- ggplot(res_df_longer, aes(x = ITERATION)) +        # Look @ it overfit.
-  geom_line(aes(y = ERROR, group = ERROR_TYPE, colour = ERROR_TYPE)) +
-  geom_vline(xintercept = best_nrounds, colour = "green") +
-  geom_label(aes(label = str_interp("${best_nrounds} iterations gives minimum validation error"), y = 0.2, x = best_nrounds, hjust = 0.1)) +
-  labs(
-    x = "nrounds",
-    y = "Error",
-    title = "Test & Train Errors",
-    subtitle = str_interp("Note how the training error keeps decreasing after ${best_nrounds} iterations, but the validation error starts \ncreeping up. This is a sign of overfitting.")
-  ) +
-  scale_colour_discrete("Error Type: ")
-
-g
+test_x <- model.matrix(TenYearCHD ~ ., test_data)[,-1]
+test_y <- as.numeric(test_data$TenYearCHD) - 1
 ```
 
+```{r}
+params <- list(max_depth = 6,
+               eta = 0.3,
+               gamma = 0,
+               min_child_weight = 1,
+               subsample = 1,
+               booster = "gbtree",
+               objective = "binary:logistic",
+               eval_metric = "auc",
+               verbosity = 0)
+
+xgbCV <- xgb.cv(params = params,
+                data = train_x,
+                label = train_y, 
+                nrounds = 200,
+                prediction = TRUE,
+                showsd = TRUE,
+                early_stopping_rounds = 20,
+                maximize = TRUE,
+                nfold = 20,
+                stratified = TRUE)
+
+numrounds <- min(which(xgbCV$evaluation_log$test_auc_mean == 
+                         max(xgbCV$evaluation_log$test_auc_mean)))
+
+fit <- xgboost(params = params,
+               data = train_x,
+               label = train_y,
+               nrounds = numrounds)
+
+pred.xgb <- predict(fit, test_x , type = "response")
+ROCpred.xgb <- prediction(as.numeric(pred.xgb), as.numeric(test_y))
+auc.xgb <- performance(ROCpred.xgb, measure = "auc")
+auc <- auc.xgb@y.values[[1]]
+names(auc) <- c("XGBoost AUC")
+auc
+
+ROCperf.xgb <- performance(ROCpred.xgb, 'tpr','fpr')
+df_ROC.xgb <- data.frame(FalsePositive = c(ROCperf.xgb@x.values[[1]]),
+                         TruePositive = c(ROCperf.xgb@y.values[[1]]))
+```
 
 ```{r}
-xgboost_train <- xgboost(data = train_x,
-                         label = train_y, 
-                         nrounds = best_nrounds,
-                         max.depth= 10,
-                         gamma = .5,
-                         eta = .25,
-                         objective = "binary:logistic",
-                         verbose = 2)
+set.seed(123)
+scoring_function <- function(
+  eta, gamma, max_depth, min_child_weight, subsample, nfold) {
+  dtrain <- xgb.DMatrix(train_x, label = train_y, missing = NA)
+
+  pars <- list(
+    eta = eta,
+    gamma = gamma,
+    max_depth = max_depth,
+    min_child_weight = min_child_weight,
+    subsample = subsample,
+
+    booster = "gbtree",
+    objective = "binary:logistic",
+    eval_metric = "auc",
+    verbosity = 0
+  )
+  
+  xgbcv <- xgb.cv(
+    params = pars,
+    data = dtrain,
+    nfold = nfold,
+    nrounds = 100,
+    prediction = TRUE,
+    showsd = TRUE,
+    early_stopping_rounds = 10,
+    maximize = TRUE,
+    stratified = TRUE
+  )
+  
+  # required by the package, the output must be a list
+  # with at least one element of "Score", the measure to optimize
+  # Score must start with capital S
+  # For this case, we also report the best num of iteration
+  return(
+    list(
+      Score = max(xgbcv$evaluation_log$test_auc_mean),
+      nrounds = xgbcv$best_iteration
+    )
+  )
+}
+
+bounds <- list(
+  eta = c(0, 1),
+  gamma =c(0, 100),
+  max_depth = c(2L, 10L), # L means integers
+  min_child_weight = c(1, 25),
+  subsample = c(0.25, 1),
+  nfold = c(3L, 10L)
+)
 
 
-pred <- tibble(TenYearCHD = predict(xgboost_train, newdata = train_x)) %>%
+opt_obj <- bayesOpt(
+  FUN = scoring_function,
+  bounds = bounds,
+  initPoints = 24,
+  iters.n = 12)
+
+# 10-10: 0.6939702 
+# 14-10: 0.7127523 
+
+
+```
+
+```{r}
+# take the optimal parameters for xgboost()
+params <- list(eta = getBestPars(opt_obj)[1],
+               gamma = getBestPars(opt_obj)[2],
+               max_depth = getBestPars(opt_obj)[3],
+               min_child_weight = getBestPars(opt_obj)[4],
+               subsample = getBestPars(opt_obj)[5],
+               nfold = getBestPars(opt_obj)[6],
+               objective = "binary:logistic")
+
+# the numrounds which gives the max Score (auc)
+numrounds <- opt_obj$scoreSummary$nrounds[
+  which(opt_obj$scoreSummary$Score
+        == max(opt_obj$scoreSummary$Score))]
+
+fit_tuned <- xgboost(params = params,
+                     data = train_x,
+                     label = train_y,
+                     nrounds = numrounds,
+                     eval_metric = "auc")
+```
+
+```{r}
+# Usual AUC calculation
+pred.xgb.tuned <- predict(fit_tuned, test_x, type = "response")
+ROCpred.xgb.tuned <- prediction(as.numeric(pred.xgb.tuned), as.numeric(test_y))
+auc.xgb.tuned <- performance(ROCpred.xgb.tuned, measure = "auc")
+auc <- auc.xgb.tuned@y.values[[1]]
+names(auc) <- c("XGBoost AUC Tuned")
+auc
+```
+
+```{r}
+ROCperf.xgb.tuned <- performance(ROCpred.xgb.tuned, 'tpr','fpr')
+df_ROC.xgb_tune <- data.frame(FalsePositive = c(ROCperf.xgb.tuned@x.values[[1]]),
+                              TruePositive = c(ROCperf.xgb.tuned@y.values[[1]]))
+
+ggplot() +
+  geom_line(data = df_ROC.xgb, aes(x = FalsePositive,
+                                   y = TruePositive,
+                                   color = "XGBoost:  0.6853251  ")) + 
+  geom_line(data = df_ROC.xgb_tune, aes(x = FalsePositive,
+                                        y = TruePositive,
+                                        color = "XGBoost Tuned: 0.7057445   ")) + 
+  geom_abline(slope = 1) + ggtitle("ROC Curves across models")
+```
+
+```{r}
+pred <- tibble(TenYearCHD = predict(fit_tuned, newdata = train_x)) %>%
   mutate(TenYearCHD = factor(ifelse(TenYearCHD < 0.5, 1, 2),
                           labels = c("0", "1")))
 
 table(pred$TenYearCHD, train_data$TenYearCHD)
-shap_results <- shap.score.rank(xgboost_train,
+shap_results <- shap.score.rank(fit_tuned,
                                 X_train = train_x,
                                 shap_approx = F)
 
@@ -282,18 +387,21 @@ shap_long <- shap.prep(shap = shap_results,
                        X_train = train_x)
 
 plot.shap.summary(shap_long)
-xgb.plot.shap(train_x, features = colnames(train_x), model = xgboost_train, n_col = 3)
+xgb.plot.shap(train_x, features = colnames(train_x), model = fit_tuned, n_col = 3)
 ```
+
 ```{r}
 logistic_test  <- predict(model_logistic, newdata = test_data)
-xgb_test <- predict(xgboost_train, newdata = model.matrix(TenYearCHD ~ ., test_data)[,-1]) %>%
+xgb_normal <- predict(fit, newdata = test_x) %>%
+  factor(x = ifelse(. < 0.5, 1, 2), levels = c(1,2), labels = c("0", "1"))
+xgb_tuned <- predict(fit_tuned, newdata = test_x) %>%
   factor(x = ifelse(. < 0.5, 1, 2), levels = c(1,2), labels = c("0", "1"))
 
 list(logistic_test, 
-     xgb_test) %>%
+     xgb_normal,
+     xgb_tuned) %>%
   map(~ confusionMatrix(.x, test_data$TenYearCHD, positive = "1"))
 ```
-
 
 
 ### Part 5. explain which method you use (regression/classification and what exactly)
