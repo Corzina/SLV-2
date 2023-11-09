@@ -6,7 +6,6 @@ output: html_document
 ---
 
 # Prediction Model
-
 ```{r setup, include=FALSE,comment=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 library(tidyverse)
@@ -114,21 +113,27 @@ data.deletion <- na.omit(data)
 
 data_normalised <- data.deletion %>%
   mutate_if(is.integer, as.numeric) %>%
+  mutate(education = as.factor(education)) %>% # change education to factor
+  mutate(TenYearCHD = as.factor(TenYearCHD)) %>% # change TenYearCHD to factor
+  mutate(currentSmoker = as.factor(currentSmoker)) %>%
+  mutate(BPMeds = as.factor(BPMeds)) %>%
+  mutate(prevalentStroke = as.factor(prevalentStroke)) %>%
+  mutate(prevalentHyp = as.factor(prevalentHyp)) %>%
+  mutate(diabetes = as.factor(diabetes)) %>%
+  mutate(male = as.factor(male)) %>%
   mutate_if(is.numeric, normalise)
 
 
 # Apply z-score standardization to all numeric columns
 data_standardized <- na.omit(data_normalised) %>%
   mutate_if(is.numeric, standardize)
-data_standardized$TenYearCHD <- as.factor(data.deletion$TenYearCHD)
-
 ```
 
 
 #### Visualize data
 ```{r}
-data_standardized %>%
-  pivot_longer(cols = -c(TenYearCHD), names_to = "name", values_to = "value") %>%
+data_normalised %>%
+  pivot_longer(cols = -c(TenYearCHD, male, education, currentSmoker, BPMeds, prevalentStroke, prevalentHyp, diabetes), names_to = "name", values_to = "value") %>%
   ggplot(aes(x = value, color = as.factor(TenYearCHD), fill = as.factor(TenYearCHD))) +
   geom_boxplot(alpha = 0.8) +
   facet_wrap(~name, scales = "free") +
@@ -136,8 +141,8 @@ data_standardized %>%
   scale_fill_brewer(palette = "Paired") +
   theme_minimal()
 
-data_standardized %>%
-  pivot_longer(cols = -c(TenYearCHD), names_to = "name", values_to = "value") %>%
+data_normalised %>%
+  pivot_longer(cols = -c(TenYearCHD, male, education, currentSmoker, BPMeds, prevalentStroke, prevalentHyp, diabetes), names_to = "name", values_to = "value") %>%
   ggplot(aes(x = value, col = as.factor(TenYearCHD), fill = as.factor(TenYearCHD))) +
   geom_density(alpha = 0.8) +
   facet_wrap(~name, scales = "free") +
@@ -148,8 +153,9 @@ data_standardized %>%
 
 
 ### Part 3. Basic Predictive Modelling
+#### simple example of a logistic regression model
 ```{r}
-mod1 <- glm(TenYearCHD ~ male + age + currentSmoker + diabetes + BMI + glucose, data = data_standardized, family = "binomial")
+mod1 <- glm(TenYearCHD ~ ., data = data_normalised, family = "binomial")
 summary(mod1)
 ```
 
@@ -166,14 +172,6 @@ train_index <- createDataPartition(data_standardized$TenYearCHD, p = train_propo
 # Split the data into training and test sets
 train_data <- data_standardized[train_index, ]
 test_data <- data_standardized[-train_index, ]
-
-# For the training dataset (train_data)
-train_predictors <- train_data[, c("male", "age", "currentSmoker", "diabetes", "BMI", "glucose")]
-train_target <- train_data$TenYearCHD
-
-# For the test dataset (test_data)
-test_predictors <- test_data[, c("male", "age", "currentSmoker", "diabetes", "BMI", "glucose")]
-test_target <- test_data$TenYearCHD
 ```
 
 
@@ -183,8 +181,8 @@ cv <- trainControl(method = "cv", number = 5)  # 5-fold cross-validation
 
 # Create the logistic regression model with cross-validation
 model_logistic <- train(
-  x = train_predictors, 
-  y = train_target, 
+  TenYearCHD ~ .,
+  data = train_data,
   method = "glm", 
   family = "binomial",
   trControl = cv
@@ -200,10 +198,10 @@ print(coef_summary)
 
 ```{r}
 # Make predictions on the test data using the trained logistic regression model
-test_predictions <- predict(model_logistic, newdata = test_predictors)
+test_predictions <- predict(model_logistic, newdata = test_data)
 
 # Confusion matrix test
-test_confusion_matrix <- confusionMatrix(test_predictions, test_target)
+test_confusion_matrix <- confusionMatrix(test_predictions, test_data$TenYearCHD)
 
 # Confusion matrix on the test data
 print(test_confusion_matrix)
@@ -216,61 +214,7 @@ FP = 124: The number of instances incorrectly predicted as class 0.
 FN = 0: The number of instances incorrectly predicted as class 1 (meaning the model did not incorrectly predict any true class 0 instances as class 1).
 TP = 4: The number of instances correctly predicted as class 1 (10-year risk of CHD).
 
-
-### Part 4. More complex model
-```{r}
-# Create the random forest model with cross-validation
-model_rf <- train(
-  x = train_predictors, 
-  y = train_target, 
-  method = "rf",  # Specify "rf" for random forest
-  trControl = cv
-)
-
-# Print the model results
-print(model_rf)
-
-# plot the variable importance
-model_rf %>%
-  varImp %>%
-  plot
-```
-
-```{r}
-# Make predictions on the train and test data using the trained random forest model
-train_predictions_rf <- predict(model_rf, newdata = train_predictors)
-test_predictions_rf <- predict(model_rf, newdata = test_predictors)
-
-# Confusion matrix random forest
-train_confusion_matrix_rf <- confusionMatrix(train_predictions_rf, train_target)
-test_confusion_matrix_rf <- confusionMatrix(test_predictions_rf, test_target)
-
-# Print the confusion matrix for the random forest model on the test and train data
-print(test_confusion_matrix_rf)
-print(train_confusion_matrix_rf)
-```
-Accuracy: The overall accuracy is 84.52%, meaning the model correctly predicted the outcome for 84.52% of the test set.
-True Negatives (TN): 711 patients were correctly predicted as not having heart disease.
-False Positives (FP): 7 patients were incorrectly predicted as having heart disease.
-True Positives (TP): 4 patients were correctly predicted as having heart disease.
-False Negatives (FN): 124 patients were incorrectly predicted as not having heart disease.
-
-
-
-
-```{r}
-model_gbm <- train(
-  x = train_predictors, 
-  y = train_target, 
-  method = "gbm", 
-  verbose = F,
-  trControl = cv
-)
-summary(model_gbm)
-
-model_gbm
-```
-
+### Part 4. A more complex model
 ```{r}
 train_x <- model.matrix(TenYearCHD ~ ., train_data)[,-1]
 train_y <- as.numeric(train_target) - 1
@@ -282,9 +226,6 @@ xgboost_train <- xgboost(data = train_x,
                          nrounds = 4,
                          objective = "binary:logistic",
                          verbose = 2)
-
-
-
 
 
 pred <- tibble(Disease = predict(xgboost_train, newdata = train_x)) %>%
@@ -307,7 +248,7 @@ plot.shap.summary(shap_long)
 xgb.plot.shap(train_x, features = colnames(train_x), model = xgboost_train, n_col = 3)
 ```
 ```{r}
-rf_test  <- predict(model_rf, newdata = test_predictors)
+rf_test  <- predict(model_rf, newdata = test_data)
 xgb_test <- predict(xgboost_train, newdata = model.matrix(TenYearCHD ~ ., test_data)[,-1]) %>%
   factor(x = ifelse(. < 0.5, 1, 2), levels = c(1,2), labels = c("0", "1"))
 
