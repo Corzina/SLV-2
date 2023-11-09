@@ -316,8 +316,8 @@ bounds <- list(
 opt_obj <- bayesOpt(
   FUN = scoring_function,
   bounds = bounds,
-  initPoints = 24,
-  iters.n = 12)
+  initPoints = 14,
+  iters.n = 10)
 
 # 10-10: 0.6939702 
 # 14-10: 0.7127523 
@@ -368,7 +368,7 @@ ggplot() +
                                    color = "XGBoost:  0.6853251  ")) + 
   geom_line(data = df_ROC.xgb_tune, aes(x = FalsePositive,
                                         y = TruePositive,
-                                        color = "XGBoost Tuned: 0.7057445   ")) + 
+                                        color = "XGBoost Tuned: 0.7127523   ")) + 
   geom_abline(slope = 1) + ggtitle("ROC Curves across models")
 ```
 
