@@ -19,6 +19,7 @@ library(xgboost)
 library(devtools)
 source_url("https://github.com/pablo14/shap-values/blob/master/shap.R?raw=TRUE")
 library(doParallel)
+library(ROCR)
 library(ParBayesianOptimization)
 ```
 
@@ -69,11 +70,14 @@ mutate(male = as.factor(male),
        prevalentHyp = as.factor(prevalentHyp),
        diabetes = as.factor( diabetes),
        TenYearCHD = as.factor(TenYearCHD))
+
+str(dataupd)
 ```
 
 Now, they are specified in a more relevant manner.
 
 #### Missing data
+
 Since factors are specified correctly we are able to explore missing data patterns:
 ```{r}
 md.pattern(dataupd)
@@ -132,7 +136,7 @@ data_standardized <- data.deletion %>%
 data_standardized %>%
   pivot_longer(cols = -c(TenYearCHD, male, education, currentSmoker, BPMeds, prevalentStroke, prevalentHyp, diabetes), names_to = "name", values_to = "value") %>%
   ggplot(aes(x = value, color = as.factor(TenYearCHD), fill = as.factor(TenYearCHD))) +
-  geom_boxplot(alpha = 0.8) +
+  geom_boxplot(alpha = 0.5) +
   facet_wrap(~name, scales = "free") +
   scale_color_brewer(palette = "Paired") +
   scale_fill_brewer(palette = "Paired") +
@@ -141,16 +145,16 @@ data_standardized %>%
 data_standardized %>%
   pivot_longer(cols = -c(TenYearCHD, male, education, currentSmoker, BPMeds, prevalentStroke, prevalentHyp, diabetes), names_to = "name", values_to = "value") %>%
   ggplot(aes(x = value, col = as.factor(TenYearCHD), fill = as.factor(TenYearCHD))) +
-  geom_density(alpha = 0.8) +
+  geom_density(alpha = 0.5) +
   facet_wrap(~name, scales = "free") +
   scale_color_brewer(palette = "Paired") +
   scale_fill_brewer(palette = "Paired") +
   theme_minimal()
 ```
 
-
 ### Part 3. Basic Predictive Modelling
 #### simple example of a logistic regression model
+
 ```{r}
 mod1 <- glm(TenYearCHD ~ ., data = data_standardized, family = "binomial")
 summary(mod1)
@@ -193,6 +197,7 @@ coef_summary <- summary(model_logistic$finalModel)
 print(coef_summary)
 ```
 
+
 ```{r}
 # Make predictions on the test data using the trained logistic regression model
 test_predictions <- predict(model_logistic, newdata = test_data)
@@ -203,6 +208,7 @@ test_confusion_matrix <- confusionMatrix(test_predictions, test_data$TenYearCHD,
 # Confusion matrix on the test data
 print(test_confusion_matrix)
 ```
+
 Accuracy:
 The model has an accuracy of 85.34%, which means that overall, it correctly predicted the outcome for 85.34% of the test set.
 TN = 718: The number of instances correctly predicted as class 0 (no 10-year risk of CHD).
@@ -211,6 +217,8 @@ FN = 0: The number of instances incorrectly predicted as class 1 (meaning the mo
 TP = 4: The number of instances correctly predicted as class 1 (10-year risk of CHD).
 
 ### Part 4. A more complex model
+
+For the first step, we create design matrices for train and test dataframes, storing Y separately.
 ```{r}
 train_x <- model.matrix(TenYearCHD ~ ., train_data)[,-1]
 train_y <- as.numeric(train_data$TenYearCHD) - 1
@@ -218,50 +226,72 @@ test_x <- model.matrix(TenYearCHD ~ ., test_data)[,-1]
 test_y <- as.numeric(test_data$TenYearCHD) - 1
 ```
 
+Then, we fit gradient boosting model. Preliminary, cross-validated XGBoost is used to find optimal number of rounds.
 ```{r}
-params <- list(max_depth = 6,
-               eta = 0.3,
-               gamma = 0,
-               min_child_weight = 1,
-               subsample = 1,
-               booster = "gbtree",
-               objective = "binary:logistic",
-               eval_metric = "auc",
-               verbosity = 0)
+# Set hyperparameter values for XGBoost
+params <- list(max_depth = 6,                  
+               eta = 0.3,                    
+               gamma = 0,                      
+               min_child_weight = 1,           
+               subsample = 1,                  # Subsample ratio of the training instances
+               booster = "gbtree",             # Tree-based models
+               objective = "binary:logistic",  # Binary logistic regression for classification
+               eval_metric = "auc",            # Evaluation metric - Area Under the Curve (AUC)
+               verbosity = 0)                  
 
-xgbCV <- xgb.cv(params = params,
-                data = train_x,
-                label = train_y, 
-                nrounds = 200,
-                prediction = TRUE,
-                showsd = TRUE,
-                early_stopping_rounds = 20,
-                maximize = TRUE,
-                nfold = 20,
-                stratified = TRUE)
+# Perform cross-validated XGBoost to find optimal number of rounds
+xgbCV <- xgb.cv(params = params,              
+                data = train_x,                
+                label = train_y,               
+                nrounds = 200,                 
+                prediction = TRUE,             
+                showsd = TRUE,                 # Show standard deviation of AUC scores
+                early_stopping_rounds = 20,    # Stop if performance doesn't improve for 20 rounds
+                maximize = TRUE,               # Maximize the evaluation metric (AUC)
+                nfold = 20,                    # Number of folds for cross-validation
+                stratified = TRUE)             # Use stratified sampling for cross-validation
 
+# Find the optimal number of rounds based on the maximum AUC score
 numrounds <- min(which(xgbCV$evaluation_log$test_auc_mean == 
                          max(xgbCV$evaluation_log$test_auc_mean)))
+numrounds
 
-fit <- xgboost(params = params,
-               data = train_x,
-               label = train_y,
-               nrounds = numrounds)
+# Train the final XGBoost model using the optimal number of rounds
+fit <- xgboost(params = params,                # XGBoost parameters
+               data = train_x,                 # Training data features
+               label = train_y,                # Training data labels
+               nrounds = numrounds)            # Number of boosting rounds
 
+# Make predictions on the test set using the trained XGBoost model
 pred.xgb <- predict(fit, test_x , type = "response")
-ROCpred.xgb <- prediction(as.numeric(pred.xgb), as.numeric(test_y))
+
+# Create a prediction object for ROC analysis
+ROCpred.xgb <- ROCR::prediction(as.numeric(pred.xgb), as.numeric(test_y))
+
+# Calculate the Area Under the Curve (AUC) for the XGBoost model
 auc.xgb <- performance(ROCpred.xgb, measure = "auc")
+
+# Extract the AUC value from the result
 auc <- auc.xgb@y.values[[1]]
+
+# Rename the AUC value for clarity
 names(auc) <- c("XGBoost AUC")
 auc
 
+# Create a performance object for the ROC curve using the XGBoost predictions
 ROCperf.xgb <- performance(ROCpred.xgb, 'tpr','fpr')
+
+# Extract True Positive Rate (TPR) and False Positive Rate (FPR) values from the performance object
 df_ROC.xgb <- data.frame(FalsePositive = c(ROCperf.xgb@x.values[[1]]),
                          TruePositive = c(ROCperf.xgb@y.values[[1]]))
+
 ```
 
+This model prediction qualities can be improved, if we find optimal parameter values, which we do in a chunk below.
 ```{r}
 set.seed(123)
+
+# Specifying a function which finds the optimal values for xgboost() parameters
 scoring_function <- function(
   eta, gamma, max_depth, min_child_weight, subsample, nfold) {
   dtrain <- xgb.DMatrix(train_x, label = train_y, missing = NA)
@@ -272,7 +302,6 @@ scoring_function <- function(
     max_depth = max_depth,
     min_child_weight = min_child_weight,
     subsample = subsample,
-
     booster = "gbtree",
     objective = "binary:logistic",
     eval_metric = "auc",
@@ -321,10 +350,9 @@ opt_obj <- bayesOpt(
 
 # 10-10: 0.6939702 
 # 14-10: 0.7127523 
-
-
 ```
 
+At the next step, we run tuned model with optimal parameters & calculate AUC for model quality estimation
 ```{r}
 # take the optimal parameters for xgboost()
 params <- list(eta = getBestPars(opt_obj)[1],
@@ -340,6 +368,7 @@ numrounds <- opt_obj$scoreSummary$nrounds[
   which(opt_obj$scoreSummary$Score
         == max(opt_obj$scoreSummary$Score))]
 
+# Running the model with updated parameters
 fit_tuned <- xgboost(params = params,
                      data = train_x,
                      label = train_y,
@@ -352,73 +381,116 @@ fit_tuned <- xgboost(params = params,
 pred.xgb.tuned <- predict(fit_tuned, test_x, type = "response")
 ROCpred.xgb.tuned <- prediction(as.numeric(pred.xgb.tuned), as.numeric(test_y))
 auc.xgb.tuned <- performance(ROCpred.xgb.tuned, measure = "auc")
-auc <- auc.xgb.tuned@y.values[[1]]
-names(auc) <- c("XGBoost AUC Tuned")
-auc
+auctuned <- auc.xgb.tuned@y.values[[1]]
+names(auctuned) <- c("XGBoost AUC Tuned")
+auctuned
 ```
 
+Now, when we can proceed to compare these models in terms of Sensitivity, Specificity and AUC.
+
 ```{r}
+# Save output in a different format
 ROCperf.xgb.tuned <- performance(ROCpred.xgb.tuned, 'tpr','fpr')
 df_ROC.xgb_tune <- data.frame(FalsePositive = c(ROCperf.xgb.tuned@x.values[[1]]),
                               TruePositive = c(ROCperf.xgb.tuned@y.values[[1]]))
 
+# Building a ROC curve comparison graph for XGBoost models with default/tuned parameters
 ggplot() +
   geom_line(data = df_ROC.xgb, aes(x = FalsePositive,
                                    y = TruePositive,
-                                   color = "XGBoost:  0.6853251  ")) + 
+                                   color = "XGBoost")) + 
   geom_line(data = df_ROC.xgb_tune, aes(x = FalsePositive,
                                         y = TruePositive,
-                                        color = "XGBoost Tuned: 0.7127523   ")) + 
-  geom_abline(slope = 1) + ggtitle("ROC Curves across models")
+                                        color = "XGBoost Tuned")) + 
+  geom_abline(slope = 1) + ggtitle("ROC Curves across models") + 
+  labs(x = "specificity", y="sensitivity")
 ```
+As expected, tuned model performs slightly better - it has a larger AOC value. Also, for the most possible points in sensitivity-specificity tradeoff, tuned model end up with better, more accurate results.
 
+Now, we continue exploring the impact on the model output made by different parameters by calculating SHAP values & marginal relationships of the SHAP values with the predictors.
 ```{r}
+# Generate predictions using the tuned XGBoost model on the training data
 pred <- tibble(TenYearCHD = predict(fit_tuned, newdata = train_x)) %>%
-  mutate(TenYearCHD = factor(ifelse(TenYearCHD < 0.5, 1, 2),
-                          labels = c("0", "1")))
+               mutate(TenYearCHD = factor(ifelse(TenYearCHD < 0.5, 1, 2),  # Convert pred probs to binary 
+               labels = c("0", "1")))
 
+# Create a confusion matrix to evaluate the model's performance on the training data
 table(pred$TenYearCHD, train_data$TenYearCHD)
+
+# Calculate SHAP (SHapley Additive exPlanations) values for feature importance
 shap_results <- shap.score.rank(fit_tuned,
                                 X_train = train_x,
                                 shap_approx = F)
 
+# Display variable importance using SHAP values
 var_importance(shap_results)
+
+# Prepare SHAP values for plotting
 shap_long <- shap.prep(shap = shap_results,
                        X_train = train_x)
 
+# Plot a summary of SHAP values
 plot.shap.summary(shap_long)
+
+# Generate SHAP summary plot using XGBoost-specific function
 xgb.plot.shap(train_x, features = colnames(train_x), model = fit_tuned, n_col = 3)
 ```
+This graphs can be interpreted in the following manner: The first graph shows that age and systolic pressure are the most important factors. The second specifies that, for example,that those with a high value forage have a higher probability of being diseased. The third ones describes precisely the relationship within a variable and the SHAP values.
 
+As a final step, we provide summary for each model and compare quality metrics. 
 ```{r}
+# prepare confusion matrices objects
 logistic_test  <- predict(model_logistic, newdata = test_data)
 xgb_normal <- predict(fit, newdata = test_x) %>%
   factor(x = ifelse(. < 0.5, 1, 2), levels = c(1,2), labels = c("0", "1"))
 xgb_tuned <- predict(fit_tuned, newdata = test_x) %>%
   factor(x = ifelse(. < 0.5, 1, 2), levels = c(1,2), labels = c("0", "1"))
 
+# show Confusion Matrix and Statistics for all models simultaneously
 list(logistic_test, 
      xgb_normal,
      xgb_tuned) %>%
   map(~ confusionMatrix(.x, test_data$TenYearCHD, positive = "1"))
 ```
 
+```{r}
+cm1 <- confusionMatrix(logistic_test, test_data$TenYearCHD, positive = "1")
+cm2 <- confusionMatrix(xgb_normal, test_data$TenYearCHD, positive = "1")
+cm3 <- confusionMatrix(xgb_tuned, test_data$TenYearCHD, positive = "1")
+
+# display confusion matrices in visual manner
+df_cm1 <- as.data.frame(as.table(cm1))
+df_cm2 <- as.data.frame(as.table(cm2))
+df_cm3 <- as.data.frame(as.table(cm3))
+
+# Combine data frames
+df_combined <- rbind(cbind(df_cm1, Matrix = "Logistic Confusion Matrix"), 
+                     cbind(df_cm2, Matrix = "XGB Confusion Matrix"),
+                     cbind(df_cm3, Matrix = "XGB tuned Confusion Matrix"))
+
+# Create a bar plot using ggplot2
+ggplot(df_combined, aes(x = Prediction, y = Freq, fill = Reference)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  facet_wrap(~Matrix, scales = "free") +
+  labs(title = "Comparison of Confusion Matrices",
+       x = "Predicted Values", y = "Frequency", fill = "True Values") +
+  scale_fill_manual(values = c("lightblue", "darkblue")) +
+  theme_minimal()
+```
 
 ### Part 5. explain which method you use (regression/classification and what exactly)
-we are using two different methods for predictive modeling: logistic regression and random forest. 
+
+we are using two different classification methods for modeling: logistic regression and gradient boosting. 
 
 Logistic Regression
-Method Type: Classification:
-Logistic regression is a statistical method for analyzing a dataset in which there are one or more independent variables that determine an outcome. The outcome is measured with a dichotomous variable (where there are only two possible outcomes). In our case, the outcome is the 10-year risk of coronary heart disease (CHD), which is binary ("1" indicating "Yes", "0" indicating "No"). Logistic regression is used here to model the probability that a given input point belongs to the category of having a risk of CHD.
-In the code, we create a logistic regression model (mod1) using the glm() function with the family set to "binomial", which indicates a logistic regression. we model the TenYearCHD as a function of several predictor variables including male, age, currentSmoker, diabetes, BMI, and glucose.
 
-Random Forest
-Method Type: Classification
-Random forest is an ensemble learning method for classification (and regression) that works by constructing a multitude of decision trees at training time and outputting the mode of the classes (majority vote) for classification. 
-In the code, a random forest model (model_rf) is created using the train() function from the caret package with the method set to "rf". This model also aims to predict the TenYearCHD outcome based on the same set of predictors as the logistic regression model. Random forests typically perform well for a wide range of data types without the need for extensive data preprocessing like normalization or scaling.
+A classical logistic regression, allows us to classify observations, based on set of predictors. In our case, the outcome is the 10-year risk of coronary heart disease (CHD), which is binary ("1" indicating "Yes", "0" indicating "No"). Logistic regression is used here to model the probability that a given input point belongs to the category of having a risk of CHD. In the code, we create a logistic regression model (mod1) using the glm() function with the family set to "binomial", which indicates a logistic regression. we model the TenYearCHD as a function of several predictor variables including male, age, currentSmoker, diabetes, BMI, and glucose.
 
-### Part 6. interpret the parameters of your method, if applicable.if no parameters, interpret the contribution of the features have to the model.
+Gradient boosting
 
-The random forests provide measures of feature importance, which indicate how much each feature contributes to the prediction. 
-If a feature like age has a high importance score, it suggests that age is a strong predictor in determining the risk of coronary heart disease across the trees in the random forest.
+Gradient Boosting is an ensemble learning technique that sequentially builds a series of weak learners, typically shallow decision trees, each correcting the errors of its predecessor, ultimately creating a strong predictive model by combining their outputs. It minimizes a predefined loss function by iteratively fitting new models to the residuals of the combined predictions. This model also aims to predict the TenYearCHD outcome based on the same set of predictors as the logistic regression model. 
+
+### Part 6. interpret the parameters of your method, if applicable. if no parameters, interpret the contribution of the features have to the model.
+
+The random forests provide measures of feature importance, which indicate how much each feature contributes to the prediction. If a feature like age has a high importance score, it suggests that age is a strong predictor in determining the risk of coronary heart disease across all the sequential builded Trees.
 For other features such as currentSmoker or BMI, their importance scores reflect their relative contribution to the model's predictions. A lower score would indicate that the feature is less influential.
