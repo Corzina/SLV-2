@@ -492,5 +492,33 @@ Gradient Boosting is an ensemble learning technique that sequentially builds a s
 
 ### Part 6. interpret the parameters of your method, if applicable. if no parameters, interpret the contribution of the features have to the model.
 
-The random forests provide measures of feature importance, which indicate how much each feature contributes to the prediction. If a feature like age has a high importance score, it suggests that age is a strong predictor in determining the risk of coronary heart disease across all the sequential builded Trees.
-For other features such as currentSmoker or BMI, their importance scores reflect their relative contribution to the model's predictions. A lower score would indicate that the feature is less influential.
+In the logistic regression model (mod1), the parameters include the predictors used to model the 10-year risk of coronary heart disease (CHD). The formula TenYearCHD ~ . indicates that the model is considering all available predictors in the dataset for predicting the binary outcome variable, TenYearCHD (1 for "Yes" and 0 for "No"). The family parameter is set to "binomial," specifying the logistic regression family.
+
+In the XGBoost model, various hyperparameters are tuned to optimize the model's performance:
+
+eta: Learning rate or step size. A lower learning rate generally requires more boosting rounds but can result in better convergence.
+gamma: Minimum loss reduction required to make a further partition on a leaf node. It controls the regularization of the model.
+max_depth: The maximum depth of the individual trees in the ensemble. Higher values can lead to more complex models.
+min_child_weight: Minimum sum of instance weight (hessian) needed in a child. It adds regularization to prevent overfitting.
+subsample: Fraction of observations to be randomly sampled for each tree. It introduces stochasticity, aiding generalization.
+booster: It specifies the type of boosting model to be used. In this case, "gbtree" indicates that tree-based models are used.
+objective: It defines the learning task and the corresponding objective function. "binary:logistic" signifies binary classification with logistic regression as the objective function. This means XGBoost will optimize the logistic loss for binary classification problems.
+eval_metric: It sets the evaluation metric to monitor during training. "auc" stands for the Area Under the Curve, a common metric for binary classification models. XGBoost will use this metric to evaluate the model's performance at each boosting round.
+verbosity: It controls the amount of information printed during training. A value of 0 indicates silent mode, where no information is printed during the training process.
+
+               
+Cross-validated XGBoost to find optimal number of rounds parameters are:
+
+params: This parameter takes the hyperparameter values specified earlier. It includes settings such as max_depth, eta, gamma, etc.
+data: It refers to the training data features (train_x), which includes all predictor variables.
+label: It is the training data labels (train_y), representing the target variable.
+nrounds: This parameter determines the maximum number of boosting rounds (iterations) that the XGBoost algorithm will run during training. It is set to 200.
+prediction: Set to TRUE, it enables the storage of predictions on the out-of-sample data for each boosting round.
+showsd: Set to TRUE, it displays the standard deviation of the evaluation metric (AUC) across the specified number of folds. This helps to assess the variability in model performance.
+early_stopping_rounds: It specifies the number of rounds with no improvement in the evaluation metric (AUC in this case) at which the training process will be stopped. Early stopping helps prevent overfitting by halting training when the model's performance on the validation set.
+maximize: Set to TRUE, the goal is to maximize the evaluation metric (AUC).
+nfold: This parameter sets the number of folds for cross-validation. Cross-validation is a resampling procedure used to evaluate the model's performance on multiple subsets of the data.
+stratified: Set to TRUE, it indicates that stratified sampling should be used for cross-validation. Stratified sampling ensures that each fold has a similar distribution of the target variable as the entire dataset, which is important for maintaining balance in binary classification problems.
+
+
+
